@@ -10,7 +10,7 @@ using namespace std;
 
 typedef pair<int, int> Time;
 typedef vector<pair<Time, string>> Route;
-typedef pair<double, int> TicketInfo;
+typedef pair<double, unsigned> TicketInfo;
 typedef pair<string, TicketInfo> Ticket;
 
 bool isItTime(Time time) {
@@ -52,16 +52,16 @@ int howManyMinutes(Time time1, Time time2) {
     return (get<0>(time2) - get<0>(time1)) * 60 + get<1>(time2) - get<1>(time1);
 }
 
-static bool isNumber(char c) {
+bool isNumber(char c) {
     return c >= '0' && c <= '9';
 }
 
-static bool isCharFromStop(char c) {
+bool isCharFromStop(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' ||
            c == '^';
 }
 
-static bool checkShuttleFormat(string line) {
+bool checkShuttleFormat(string line) {
     bool result = true;
     int index = 0, limit = line.size(), hour, minute;
     pair<int, int> time1 = make_pair(5, 54), time2;
@@ -91,17 +91,20 @@ static bool checkShuttleFormat(string line) {
                     result = false;
 
             if (result) {
-                stringstream(line.substr(index, limit - index))
-                >> hour >> minute;
+                stringstream(line.substr(index, limit - index)) >> hour;
+
+                if (line[index] > '2')
+                    index += 2;
+                else
+                    index += 3;
+                stringstream(line.substr(index, limit - index)) >> minute;
+
                 time2 = make_pair(hour, minute);
 
                 if (!isItTime(time2) || whichTimeIsEarlier(time1, time2) != 1)
                     result = false;
 
-                if (get<0>(time2) < 10)
-                    index += 5;
-                else
-                    index += 6;
+                index += 3;
             }
         }
         else {
@@ -124,13 +127,25 @@ static bool checkShuttleFormat(string line) {
     return result;
 }
 
-static bool addShuttle(string line, map<int, Route> &shuttles) {
-    int shuttleId, hour, minute;
+bool checkLoop(Route &route, string &stopName) {
+    for (pair<Time, string> p: route)
+        if (get<1>(p) == stopName)
+            return false;
+
+    return true;
+}
+
+bool addShuttle(string line, map<unsigned, Route> &shuttles) {
+    int hour, minute;
+    unsigned shuttleId;
     long unsigned int index = 0;
     string stopName;
     Route stopInfo;
     if (checkShuttleFormat(line)) {
         stringstream(line) >> shuttleId;
+
+        if (shuttles.count(shuttleId) == 1)
+            return false;
 
         while (line[index] != ' ')
             index++;
@@ -139,7 +154,14 @@ static bool addShuttle(string line, map<int, Route> &shuttles) {
         line = line.substr(index, line.size() - index);
 
         while (!line.empty()) {
-            stringstream(line) >> hour >> minute;
+            stringstream(line) >> hour;
+
+            if (line[0] > '2')
+                line = line.substr(2, line.size() - 2);
+            else
+                line = line.substr(3, line.size() - 3);
+
+            stringstream(line) >> minute;
 
             index = 0;
             while (line[index] != ' ')
@@ -149,7 +171,9 @@ static bool addShuttle(string line, map<int, Route> &shuttles) {
             line = line.substr(index, line.size() - index);
             stringstream(line) >> stopName;
 
-            stopInfo.emplace_back(make_pair(hour, minute), stopName);
+            if (checkLoop(stopInfo, stopName)) {
+                stopInfo.emplace_back(make_pair(hour, minute), stopName);
+            }
 
             index = 0;
             while (index < line.size() && line[index] != ' ')
@@ -161,8 +185,7 @@ static bool addShuttle(string line, map<int, Route> &shuttles) {
             line = line.substr(index, line.size() - index);
         }
 
-        shuttles.insert(pair<int, vector<pair<pair<int, int>, string>>>
-                        (shuttleId, stopInfo));
+        shuttles.insert(pair<int, Route>(shuttleId, stopInfo));
 
         return true;
     }
@@ -171,20 +194,21 @@ static bool addShuttle(string line, map<int, Route> &shuttles) {
     }
 }
 
-static bool checkText(string text) {
+bool checkText(string &text, set<Ticket> &tickets) {
     bool result = true;
 
     for (char c: text)
         if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == ' '))
             result = false;
 
-    if (text[text.size() - 1] == ' ')
-        result = false;
+    for (Ticket t: tickets)
+        if (text == get<0>(t))
+            result = false;
 
     return result;
 }
 
-static bool checkIfItsTicketFormat(string line) {
+bool checkIfItsTicketFormat(string line) {
     bool result = true;
     int index = 1, limit = line.size();
 
@@ -216,22 +240,23 @@ static bool checkIfItsTicketFormat(string line) {
     return result;
 }
 
-static bool addTicket(string line, set<Ticket> &tickets) {
-    int index = 0, timeOfValidity;
+bool addTicket(string line, set<Ticket> &tickets) {
+    int index = 0;
+    unsigned length = line.size(), timeOfValidity;
     double ticketPrice;
     string ticketName;
     TicketInfo ticketInfo;
 
-    while (line[index] != ' ' ||
-           line[index + 1] < '0' || line[index + 1] > '9') {
+    while (index + 1 < length && (line[index] != ' ' ||
+           line[index + 1] < '0' || line[index + 1] > '9')) {
         ticketName += line[index];
         index++;
     }
 
-    if (checkText(ticketName) &&
+    if (checkText(ticketName, tickets) &&
         checkIfItsTicketFormat(line.substr(index, line.size() - index))) {
         stringstream(line.substr(index, line.size() - index))
-        >> ticketPrice >> timeOfValidity;
+                >> ticketPrice >> timeOfValidity;
 
         ticketInfo = make_pair(ticketPrice, timeOfValidity);
         tickets.insert(make_pair(ticketName, ticketInfo));
@@ -243,7 +268,7 @@ static bool addTicket(string line, set<Ticket> &tickets) {
     }
 }
 
-static bool checkAskingFormat(string line) {
+bool checkAskingFormat(string line) {
     bool result = true;
     int index = 1, limit = line.size();
 
@@ -259,6 +284,9 @@ static bool checkAskingFormat(string line) {
         index++;
     }
 
+    if (index >= limit)
+        result = false;
+
     while (result && index < limit) {
         if (index + 1 >= limit)
             result = false;
@@ -271,7 +299,7 @@ static bool checkAskingFormat(string line) {
             index++;
         }
 
-        if (line[index] != ' ')
+        if (index >= limit || line[index] != ' ')
             result = false;
         index++;
 
@@ -286,9 +314,8 @@ static bool checkAskingFormat(string line) {
     return result;
 }
 
-static bool checkShuttleTime(map<int, Route> shuttles, int shuttleId,
-                             string &stop1, string &stop2, Time &arrival,
-                             int &time) {
+bool checkShuttleTime(map<unsigned, Route> shuttles, int shuttleId,
+                      string &stop1, string &stop2, Time &arrival, int &time) {
     bool result = true, stop1check = false, stop2check = false;
     Route route;
     Time departure;
@@ -319,13 +346,13 @@ static bool checkShuttleTime(map<int, Route> shuttles, int shuttleId,
     return result;
 }
 
-static int findOptimalTickets(int time, set<Ticket> &tickets) {
-    int currentTime;
+int findOptimalTickets(int time, set<Ticket> &tickets) {
+    unsigned currentTime;
     double price = numeric_limits<double>::max(), currentPrice;
     string ticket1 = "_", ticket2 = "_", ticket3 = "_";
 
     for (Ticket t: tickets) {
-        if (get<1>(get<1>(t)) >= time && get<0>(get<1>(t)) < price) {
+        if (get<1>(get<1>(t)) > time && get<0>(get<1>(t)) < price) {
             ticket1 = get<0>(t);
             price = get<0>(get<1>(t));
         }
@@ -335,7 +362,7 @@ static int findOptimalTickets(int time, set<Ticket> &tickets) {
         for (Ticket t2: tickets) {
             currentTime = get<1>(get<1>(t1)) + get<1>(get<1>(t2));
             currentPrice = get<0>(get<1>(t1)) + get<0>(get<1>(t2));
-            if (currentTime >= time && currentPrice < price) {
+            if (currentTime > time && currentPrice < price) {
                 ticket1 = get<0>(t1);
                 ticket2 = get<0>(t2);
                 price = currentPrice;
@@ -350,7 +377,7 @@ static int findOptimalTickets(int time, set<Ticket> &tickets) {
                               get<1>(get<1>(t3));
                 currentPrice = get<0>(get<1>(t1)) + get<0>(get<1>(t2)) +
                                get<0>(get<1>(t3));
-                if (currentTime >= time && currentPrice < price) {
+                if (currentTime > time && currentPrice < price) {
                     ticket1 = get<0>(t1);
                     ticket2 = get<0>(t2);
                     ticket3 = get<0>(t3);
@@ -378,8 +405,8 @@ static int findOptimalTickets(int time, set<Ticket> &tickets) {
     }
 }
 
-static bool askForTickets(string line, map<int, Route> &shuttles,
-                          set<Ticket> &tickets, int &numberOfTickets) {
+bool askForTickets(string line, map<unsigned, Route> &shuttles,
+                   set<Ticket> &tickets, int &numberOfTickets) {
     bool result = true;
     int shuttleId, totalTime = 0, time2 = 0;
     unsigned long int index = 2;
@@ -445,7 +472,7 @@ static bool askForTickets(string line, map<int, Route> &shuttles,
     return result;
 }
 
-void parse(string line, map<int, Route> &shuttles, set<Ticket> &tickets,
+void parse(string line, map<unsigned, Route> &shuttles, set<Ticket> &tickets,
            int lineCounter, int &numberOfTickets) {
     bool check = true;
 
@@ -453,7 +480,7 @@ void parse(string line, map<int, Route> &shuttles, set<Ticket> &tickets,
         check = addShuttle(line, shuttles);
     }
     else if ((line[0] >= 'a' && line[0] <= 'z') ||
-             (line[0] >= 'A' && line[0] <= 'Z')) {
+             (line[0] >= 'A' && line[0] <= 'Z') || line[0] == ' ') {
         check = addTicket(line, tickets);
     }
     else if (line[0] == '?') {
@@ -470,7 +497,7 @@ void parse(string line, map<int, Route> &shuttles, set<Ticket> &tickets,
 int main() {
     int lineCounter = 1, numberOfTickets = 0;
     string line;
-    map<int, Route> shuttles;
+    map<unsigned, Route> shuttles;
     set<Ticket> tickets;
 
     while (getline(cin, line)) {
